@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>文件上传</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f6f8;
+      --card: #fff;
+      --text: #1f2933;
+      --muted: #6b7280;
+      --line: #e5e7eb;
+      --accent: #2563eb;
+      --ok: #059669;
+      --err: #dc2626;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Noto Sans SC", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .card {
+      width: min(420px, calc(100vw - 32px));
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 28px 24px;
+      box-shadow: 0 12px 32px rgba(15, 23, 42, 0.06);
+    }
+    h1 {
+      margin: 0 0 20px;
+      font-size: 20px;
+      font-weight: 650;
+    }
+    input[type="file"] {
+      width: 100%;
+      padding: 10px;
+      border: 1px dashed var(--line);
+      border-radius: 10px;
+      background: #fafafa;
+    }
+    button {
+      margin-top: 14px;
+      width: 100%;
+      height: 42px;
+      border: 0;
+      border-radius: 10px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    .progress-wrap {
+      margin-top: 16px;
+      display: none;
+    }
+    .progress-wrap.show { display: block; }
+    .bar {
+      height: 8px;
+      border-radius: 999px;
+      background: #eef2f7;
+      overflow: hidden;
+    }
+    .fill {
+      height: 100%;
+      width: 0%;
+      background: var(--accent);
+      transition: width 0.12s linear;
+    }
+    .meta {
+      margin-top: 8px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .msg { margin-top: 12px; font-size: 14px; min-height: 1.2em; }
+    .msg.ok { color: var(--ok); }
+    .msg.err { color: var(--err); }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>上传文件</h1>
+    <input id="file" type="file" />
+    <button id="upload" type="button">上传</button>
+    <div class="progress-wrap" id="progressWrap">
+      <div class="bar"><div class="fill" id="fill"></div></div>
+      <div class="meta" id="meta">0%</div>
+    </div>
+    <div class="msg" id="msg"></div>
+  </main>
+  <script>
+    const fileInput = document.getElementById("file");
+    const uploadBtn = document.getElementById("upload");
+    const progressWrap = document.getElementById("progressWrap");
+    const fill = document.getElementById("fill");
+    const meta = document.getElementById("meta");
+    const msg = document.getElementById("msg");
+
+    function formatBytes(n) {
+      if (!Number.isFinite(n) || n <= 0) return "0 B";
+      const units = ["B", "KB", "MB", "GB"];
+      let i = 0;
+      while (n >= 1024 && i < units.length - 1) {
+        n /= 1024;
+        i++;
+      }
+      return n.toFixed(i === 0 ? 0 : 1) + " " + units[i];
+    }
+
+    function setProgress(loaded, total) {
+      const pct = total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : 0;
+      fill.style.width = pct + "%";
+      meta.textContent = pct + "% · " + formatBytes(loaded) + " / " + formatBytes(total);
+    }
+
+    uploadBtn.addEventListener("click", () => {
+      const file = fileInput.files[0];
+      msg.className = "msg";
+      msg.textContent = "";
+
+      if (!file) {
+        msg.classList.add("err");
+        msg.textContent = "请先选择文件";
+        return;
+      }
+
+      const form = new FormData();
+      form.append("file", file);
+
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/upload");
+      uploadBtn.disabled = true;
+      fileInput.disabled = true;
+      progressWrap.classList.add("show");
+      setProgress(0, file.size);
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) setProgress(e.loaded, e.total);
+      };
+
+      xhr.onload = () => {
+        uploadBtn.disabled = false;
+        fileInput.disabled = false;
+        let data = {};
+        try { data = JSON.parse(xhr.responseText); } catch (_) {}
+        if (xhr.status >= 200 && xhr.status < 300 && data.ok) {
+          setProgress(file.size, file.size);
+          msg.classList.add("ok");
+          msg.textContent = "上传完成：" + data.filename;
+        } else {
+          msg.classList.add("err");
+          msg.textContent = data.error || "上传失败";
+        }
+      };
+
+      xhr.onerror = () => {
+        uploadBtn.disabled = false;
+        fileInput.disabled = false;
+        msg.classList.add("err");
+        msg.textContent = "网络错误，上传失败";
+      };
+
+      xhr.send(form);
+    });
+  </script>
+</body>
+</html>
