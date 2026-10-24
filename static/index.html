@@ -39,12 +39,42 @@
       font-size: 20px;
       font-weight: 650;
     }
-    input[type="file"] {
-      width: 100%;
-      padding: 10px;
+    .dropzone {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 132px;
+      padding: 18px 14px;
       border: 1px dashed var(--line);
-      border-radius: 10px;
+      border-radius: 12px;
       background: #fafafa;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s, color 0.15s;
+    }
+    .dropzone:hover,
+    .dropzone.dragover {
+      border-color: var(--accent);
+      background: #eff6ff;
+    }
+    .dropzone.disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+    .dropzone input {
+      display: none;
+    }
+    .dropzone .title {
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .dropzone .hint {
+      font-size: 13px;
+      color: var(--muted);
+      word-break: break-all;
     }
     button {
       margin-top: 14px;
@@ -92,7 +122,11 @@
 <body>
   <main class="card">
     <h1>上传文件</h1>
-    <input id="file" type="file" />
+    <label class="dropzone" id="dropzone">
+      <input id="file" type="file" />
+      <span class="title">拖入文件到这里</span>
+      <span class="hint" id="hint">也可以点击选择文件</span>
+    </label>
     <button id="upload" type="button">上传</button>
     <div class="progress-wrap" id="progressWrap">
       <div class="bar"><div class="fill" id="fill"></div></div>
@@ -101,7 +135,9 @@
     <div class="msg" id="msg"></div>
   </main>
   <script>
+    const dropzone = document.getElementById("dropzone");
     const fileInput = document.getElementById("file");
+    const hint = document.getElementById("hint");
     const uploadBtn = document.getElementById("upload");
     const progressWrap = document.getElementById("progressWrap");
     const fill = document.getElementById("fill");
@@ -119,11 +155,82 @@
       return n.toFixed(i === 0 ? 0 : 1) + " " + units[i];
     }
 
+    function setBusy(busy) {
+      uploadBtn.disabled = busy;
+      fileInput.disabled = busy;
+      dropzone.classList.toggle("disabled", busy);
+    }
+
+    function showFile(file) {
+      if (!file) {
+        hint.textContent = "也可以点击选择文件";
+        return;
+      }
+      hint.textContent = file.name + " · " + formatBytes(file.size);
+    }
+
+    function assignFile(file) {
+      if (!file) return;
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      fileInput.files = dt.files;
+      showFile(file);
+      msg.className = "msg";
+      msg.textContent = "";
+    }
+
+    function firstFileFromList(list) {
+      if (!list || !list.length) return null;
+      for (const item of list) {
+        if (item && item.kind === "file") {
+          const file = item.getAsFile();
+          if (file) return file;
+        }
+      }
+      return list[0] && list[0].kind ? null : list[0];
+    }
+
     function setProgress(loaded, total) {
       const pct = total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : 0;
       fill.style.width = pct + "%";
       meta.textContent = pct + "% · " + formatBytes(loaded) + " / " + formatBytes(total);
     }
+
+    function preventWindowDrop(e) {
+      e.preventDefault();
+    }
+    window.addEventListener("dragover", preventWindowDrop);
+    window.addEventListener("drop", preventWindowDrop);
+
+    dropzone.addEventListener("dragenter", (e) => {
+      e.preventDefault();
+      dropzone.classList.add("dragover");
+    });
+    dropzone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+      dropzone.classList.add("dragover");
+    });
+    dropzone.addEventListener("dragleave", (e) => {
+      if (!dropzone.contains(e.relatedTarget)) {
+        dropzone.classList.remove("dragover");
+      }
+    });
+    dropzone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dropzone.classList.remove("dragover");
+      const file = firstFileFromList(e.dataTransfer.items) || e.dataTransfer.files[0];
+      if (!file) {
+        msg.className = "msg err";
+        msg.textContent = "请拖入文件";
+        return;
+      }
+      assignFile(file);
+    });
+
+    fileInput.addEventListener("change", () => {
+      showFile(fileInput.files[0]);
+    });
 
     uploadBtn.addEventListener("click", () => {
       const file = fileInput.files[0];
@@ -132,7 +239,7 @@
 
       if (!file) {
         msg.classList.add("err");
-        msg.textContent = "请先选择文件";
+        msg.textContent = "请先选择或拖入文件";
         return;
       }
 
@@ -141,8 +248,7 @@
 
       const xhr = new XMLHttpRequest();
       xhr.open("POST", "/upload");
-      uploadBtn.disabled = true;
-      fileInput.disabled = true;
+      setBusy(true);
       progressWrap.classList.add("show");
       setProgress(0, file.size);
 
@@ -151,8 +257,7 @@
       };
 
       xhr.onload = () => {
-        uploadBtn.disabled = false;
-        fileInput.disabled = false;
+        setBusy(false);
         let data = {};
         try { data = JSON.parse(xhr.responseText); } catch (_) {}
         if (xhr.status >= 200 && xhr.status < 300 && data.ok) {
@@ -166,8 +271,7 @@
       };
 
       xhr.onerror = () => {
-        uploadBtn.disabled = false;
-        fileInput.disabled = false;
+        setBusy(false);
         msg.classList.add("err");
         msg.textContent = "网络错误，上传失败";
       };
