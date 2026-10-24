@@ -341,7 +341,7 @@ func createUniqueTmp(dir, name string) (*os.File, string, error) {
 		if err != nil {
 			return nil, "", err
 		}
-		path := filepath.Join(dir, name+"_"+suf)
+		path := filepath.Join(dir, name+"."+suf+".tmp")
 		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 		if err == nil {
 			return f, path, nil
