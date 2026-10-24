@@ -34,10 +34,62 @@ func main() {
 
 	handler := withRequestLog(mux)
 
-	log.Printf("服务已启动，打开 http://localhost%s 上传文件", addr)
+	logStartupURLs(addr)
 	if err := http.ListenAndServe(addr, handler); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func logStartupURLs(addr string) {
+	port := addr
+	if i := strings.LastIndex(addr, ":"); i >= 0 {
+		port = addr[i:]
+	}
+	log.Printf("服务已启动，打开以下地址上传文件")
+	log.Printf("  本机: http://localhost%s", port)
+	lans := lanIPv4s()
+	if len(lans) == 0 {
+		log.Printf("  局域网: 未发现可用地址")
+		return
+	}
+	for _, ip := range lans {
+		log.Printf("  局域网: http://%s%s", ip, port)
+	}
+}
+
+func lanIPv4s() []string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var ips []string
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			ipnet, ok := addr.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			ip := ipnet.IP.To4()
+			if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+				continue
+			}
+			s := ip.String()
+			if seen[s] {
+				continue
+			}
+			seen[s] = true
+			ips = append(ips, s)
+		}
+	}
+	return ips
 }
 
 func withRequestLog(next http.Handler) http.Handler {
