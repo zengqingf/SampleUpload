@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -160,8 +161,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		progress.setName(name)
 		log.Printf("任务进行 上传 ip=%s file=%s", ip, name)
 
-		dstPath := uniquePath(filepath.Join(uploadDir, name))
-		dst, err := os.Create(dstPath)
+		dst, tmpPath, err := createUniqueTmp(uploadDir, name)
 		if err != nil {
 			_ = part.Close()
 			log.Printf("任务失败 上传 ip=%s file=%s err=无法保存文件: %v", ip, name, err)
@@ -173,12 +173,20 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		_ = dst.Close()
 		_ = part.Close()
 		if err != nil {
-			_ = os.Remove(dstPath)
+			_ = os.Remove(tmpPath)
 			log.Printf("任务失败 上传 ip=%s file=%s err=写入文件失败: %v", ip, name, err)
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": "写入文件失败"})
 			return
 		}
-		saved = filepath.Base(dstPath)
+
+		finalPath, err := commitUpload(tmpPath, uploadDir, name)
+		if err != nil {
+			_ = os.Remove(tmpPath)
+			log.Printf("任务失败 上传 ip=%s file=%s err=完成文件失败: %v", ip, name, err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": "无法保存文件"})
+			return
+		}
+		saved = filepath.Base(finalPath)
 		break
 	}
 
@@ -313,16 +321,71 @@ func sanitizeFilename(name string) string {
 	return strings.TrimSpace(b.String())
 }
 
-func uniquePath(path string) string {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return path
+const tmpAlphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+func randomSuffix(n int) (string, error) {
+	raw := make([]byte, n)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
 	}
-	ext := filepath.Ext(path)
-	stem := strings.TrimSuffix(path, ext)
-	for i := 1; ; i++ {
-		candidate := fmt.Sprintf("%s-%d%s", stem, i, ext)
-		if _, err := os.Stat(candidate); os.IsNotExist(err) {
-			return candidate
+	out := make([]byte, n)
+	for i, b := range raw {
+		out[i] = tmpAlphabet[int(b)%len(tmpAlphabet)]
+	}
+	return string(out), nil
+}
+
+func createUniqueTmp(dir, name string) (*os.File, string, error) {
+	for range 100 {
+		suf, err := randomSuffix(6)
+		if err != nil {
+			return nil, "", err
+		}
+		path := filepath.Join(dir, name+"_"+suf)
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if err == nil {
+			return f, path, nil
+		}
+		if !os.IsExist(err) {
+			return nil, "", err
+		}
+	}
+	return nil, "", fmt.Errorf("无法创建临时文件")
+}
+
+func commitUpload(tmpPath, dir, name string) (string, error) {
+	try := func(dest string) (bool, error) {
+		if err := os.Link(tmpPath, dest); err == nil {
+			if rmErr := os.Remove(tmpPath); rmErr != nil {
+				log.Printf("清理临时文件失败 path=%s err=%v", tmpPath, rmErr)
+			}
+			return true, nil
+		} else if os.IsExist(err) {
+			return false, nil
+		} else {
+			return false, err
+		}
+	}
+
+	dest := filepath.Join(dir, name)
+	ok, err := try(dest)
+	if err != nil {
+		return "", err
+	}
+	if ok {
+		return dest, nil
+	}
+
+	ext := filepath.Ext(name)
+	stem := strings.TrimSuffix(name, ext)
+	for i := 2; ; i++ {
+		dest = filepath.Join(dir, fmt.Sprintf("%s_%d%s", stem, i, ext))
+		ok, err := try(dest)
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			return dest, nil
 		}
 	}
 }
