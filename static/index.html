@@ -145,14 +145,28 @@
     const msg = document.getElementById("msg");
 
     function formatBytes(n) {
-      if (!Number.isFinite(n) || n <= 0) return "0 B";
+      if (!Number.isFinite(n) || n < 0) return "0 B";
       const units = ["B", "KB", "MB", "GB"];
       let i = 0;
-      while (n >= 1024 && i < units.length - 1) {
-        n /= 1024;
+      let val = n;
+      while (val >= 1024 && i < units.length - 1) {
+        val /= 1024;
         i++;
       }
-      return n.toFixed(i === 0 ? 0 : 1) + " " + units[i];
+      return val.toFixed(i === 0 ? 0 : 1) + " " + units[i];
+    }
+
+    function formatSpeed(bps) {
+      if (!Number.isFinite(bps) || bps <= 0) return "--";
+      return formatBytes(bps) + "/s";
+    }
+
+    function setProgress(loaded, total, speed) {
+      const pct = total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : 0;
+      fill.style.width = pct + "%";
+      let text = pct + "% · " + formatBytes(loaded) + " / " + formatBytes(total);
+      if (speed != null) text += " · " + formatSpeed(speed);
+      meta.textContent = text;
     }
 
     function setBusy(busy) {
@@ -188,12 +202,6 @@
         }
       }
       return list[0] && list[0].kind ? null : list[0];
-    }
-
-    function setProgress(loaded, total) {
-      const pct = total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : 0;
-      fill.style.width = pct + "%";
-      meta.textContent = pct + "% · " + formatBytes(loaded) + " / " + formatBytes(total);
     }
 
     function preventWindowDrop(e) {
@@ -250,18 +258,34 @@
       xhr.open("POST", "/upload");
       setBusy(true);
       progressWrap.classList.add("show");
-      setProgress(0, file.size);
+      const startedAt = performance.now();
+      let lastAt = startedAt;
+      let lastLoaded = 0;
+      let speed = 0;
+      setProgress(0, file.size, 0);
 
       xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) setProgress(e.loaded, e.total);
+        if (!e.lengthComputable) return;
+        const now = performance.now();
+        const dt = (now - lastAt) / 1000;
+        const d = e.loaded - lastLoaded;
+        if (dt >= 0.2 && d >= 0) {
+          const inst = d / dt;
+          speed = speed > 0 ? speed * 0.65 + inst * 0.35 : inst;
+          lastAt = now;
+          lastLoaded = e.loaded;
+        }
+        setProgress(e.loaded, e.total, speed);
       };
 
       xhr.onload = () => {
         setBusy(false);
         let data = {};
         try { data = JSON.parse(xhr.responseText); } catch (_) {}
+        const elapsed = Math.max(0.001, (performance.now() - startedAt) / 1000);
+        const avg = file.size / elapsed;
         if (xhr.status >= 200 && xhr.status < 300 && data.ok) {
-          setProgress(file.size, file.size);
+          setProgress(file.size, file.size, avg);
           msg.classList.add("ok");
           msg.textContent = "上传完成：" + data.filename;
         } else {
